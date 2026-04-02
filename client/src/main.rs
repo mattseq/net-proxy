@@ -1,5 +1,6 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::UdpSocket;
+use std::sync::Arc;
 
 fn main() {
     const VPS_IP: &str = "24.55.14.254";
@@ -11,7 +12,7 @@ fn main() {
         .netmask("255.255.255.255")
         .up();
 
-    let mut device = tun::create(&config).unwrap();
+    let device = tun::create(&config).unwrap();
 
     // prevent tunnel traffic from going into itself by routing vps traffic through the router
     // also idk now how string concatenation works in rust so imma use format, sue me
@@ -26,16 +27,28 @@ fn main() {
         .status()
         .unwrap();
 
-    let udp = UdpSocket::bind("0.0.0.0:0").unwrap();
-
-    let mut buf = vec![0u8; 1500];
+    let udp = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
 
     let vps_addr = format!("{}:5000", VPS_IP);
-    loop {
-        // get size of data written to buffer
-        let n = device.read(&mut buf).unwrap();
 
-        // send data from buffer to VPS
+    let udp_recv = Arc::clone(&udp);
+
+    // split tun device into reader and writer for separate threads
+    let (mut reader, mut writer) = device.split();
+
+    // receive thread: receive from udp and write to device
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 1500];
+        loop {
+            let (n, src) = udp_recv.recv_from(&mut buf).unwrap();
+            writer.write_all(&buf[..n]).unwrap();
+        }
+    });
+
+    // write thread: read from device and write to udp
+    let mut buf = vec![0u8; 1500];
+    loop {
+        let n = reader.read(&mut buf).unwrap();
         udp.send_to(&buf[..n], &vps_addr).unwrap();
     }
 }
