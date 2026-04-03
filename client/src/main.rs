@@ -2,8 +2,34 @@ use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::sync::Arc;
 
+struct CleanUp {
+    vps_route: String,
+    gateway_ip: String
+}
+
+impl CleanUp {
+    fn new(vps_ip: &str, gateway_ip: &str) -> Self {
+        Self {
+            vps_route: format!("{}/32", vps_ip),
+            gateway_ip: gateway_ip.to_string()
+        }
+    }
+}
+
+impl Drop for CleanUp {
+    fn drop(&mut self) {
+        std::process::Command::new("ip")
+            .args(["route", "del", &self.vps_route, "via", &self.gateway_ip])
+            .status().ok();
+        std::process::Command::new("ip")
+            .args(["route", "del", "0.0.0.0/0", "dev", "tun0"])
+            .status().ok();
+    }
+}
+
 fn main() {
     const VPS_IP: &str = "24.55.14.254";
+    const VPS_PORT: &str = "5000";
     const GATEWAY_IP: &str = "192.168.1.1";
 
     let mut config = tun::Configuration::default();
@@ -27,14 +53,21 @@ fn main() {
         .status()
         .unwrap();
 
+    // cleanup Drop trait handles removing tun0 and ip routes
+    let _cleanup = CleanUp::new(VPS_IP, GATEWAY_IP);
+
     let udp = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
 
-    let vps_addr = format!("{}:5000", VPS_IP);
+    let vps_addr = format!("{}:{}", VPS_IP, VPS_PORT);
 
     let udp_recv = Arc::clone(&udp);
 
     // split tun device into reader and writer for separate threads
     let (mut reader, mut writer) = device.split();
+
+    ctrlc::set_handler(move || {
+        std::process::exit(0);
+    }).unwrap();
 
     // receive thread: receive from udp and write to device
     std::thread::spawn(move || {
