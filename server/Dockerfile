@@ -2,7 +2,7 @@
 FROM rust:alpine AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release
+RUN cargo build --release -p server
 
 # Stage 2: Run
 FROM alpine:latest

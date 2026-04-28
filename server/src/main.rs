@@ -1,8 +1,6 @@
-use chacha20poly1305::aead::Aead;
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
+use common::VpnEngine;
 use ed25519_dalek::{Signature, SigningKey, Verifier};
 use sha2::{Digest, Sha256};
-use std::io::{Read, Write};
 use std::net::UdpSocket;
 use std::sync::Arc;
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -89,10 +87,6 @@ fn main() {
         }
     };
 
-    let cipher = Arc::new(ChaCha20Poly1305::new_from_slice(&session_key).unwrap());
-    let mut counter: u64 = 0;
-    let cipher_recv = Arc::clone(&cipher);
-
     let mut config = tun::Configuration::default();
     config
         .address("10.0.0.2")
@@ -150,47 +144,17 @@ fn main() {
         std::process::exit(0);
     }).unwrap();
 
-    let (mut reader, mut writer) = device.split();
+    let counter: u64 = 0;
+    let (reader, writer) = device.split();
+
+    let engine_outbound = Arc::new(VpnEngine::new(&session_key));
+    let engine_inbound = Arc::clone(&engine_outbound);
 
     // proxy thread: receive from client through udp, modify sender ip (nat rule), and send through tun
     std::thread::spawn(move || {
-        let mut buf = vec![0u8; 1528];
-        loop {
-            let (n, src) = udp_recv.recv_from(&mut buf).unwrap();
-
-            // only allow established client
-            if !src.eq(&client_addr) {
-                continue;
-            }
-
-            let (nonce_bytes, ciphertext) = buf[..n].split_at(12);
-            let nonce = Nonce::from_slice(nonce_bytes);
-
-            // TODO: check nonce with previous nonce sent
-
-            let decrypted = cipher_recv.decrypt(&nonce, ciphertext).unwrap();
-
-            writer.write_all(&decrypted).unwrap();
-            println!("2. packet forwarded");
-        }
+        engine_inbound.run_inbound(writer, udp, Some(client_addr));
     });
 
     // return thread: receive from tun, modify destination ip (nat rule), send back to client through udp
-    let mut buf = vec![0u8; 1528];
-    loop {
-        let n = reader.read(&mut buf).unwrap();
-        counter += 1;
-
-        let mut nonce_bytes =[0u8; 12];
-        nonce_bytes[..8].copy_from_slice(&counter.to_be_bytes());
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let ciphertext = cipher.encrypt(&nonce, &buf[..n]).unwrap();
-
-        let mut packet = nonce_bytes.to_vec();
-        packet.extend_from_slice(&ciphertext);
-        udp.send_to(&packet, client_addr).unwrap();
-
-        println!("3. packet received, forwarding backward");
-    }
+    engine_outbound.run_outbound(reader, udp_recv, client_addr, counter);
 }

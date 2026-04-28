@@ -1,9 +1,8 @@
-use chacha20poly1305::aead::Aead;
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
+use common::VpnEngine;
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
-use std::io::{Read, Write};
-use std::net::UdpSocket;
+use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use x25519_dalek::{EphemeralSecret, PublicKey};
@@ -42,7 +41,7 @@ fn main() {
     const GATEWAY_IP: &str = "172.20.0.1";
     let access_key: SigningKey = SigningKey::from(&[0u8; 32]);
 
-    let vps_addr = format!("{}:{}", VPS_IP, VPS_PORT);
+    let vps_addr: SocketAddr = format!("{}:{}", VPS_IP, VPS_PORT).parse().expect("Invalid VPS address format");
 
     let udp = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
 
@@ -160,41 +159,14 @@ fn main() {
         std::process::exit(0);
     }).unwrap();
 
+    let engine_outbound = Arc::new(VpnEngine::new(&session_key));
+    let engine_inbound = Arc::clone(&engine_outbound);
+
     // receive thread: receive from udp and write to device
     std::thread::spawn(move || {
-        let mut buf = vec![0u8; 1500];
-        loop {
-            let (n, src) = udp_recv.recv_from(&mut buf).unwrap();
-            println!("4. packet returned from {}", src);
-
-            // split for nonce
-            let (nonce_bytes, ciphertext) = buf[..n].split_at(12);
-            let nonce = Nonce::from_slice(nonce_bytes);
-
-            // TODO: check nonce with previous nonce sent
-
-            let decrypted = cipher_recv.decrypt(&nonce, ciphertext).unwrap();
-
-            writer.write_all(&decrypted).unwrap();
-        }
+        engine_inbound.run_inbound(writer, udp_recv, Some(vps_addr));
     });
 
     // write thread: read from device and write to udp
-    let mut buf = vec![0u8; 1500];
-    loop {
-        let n = reader.read(&mut buf).unwrap();
-        counter += 1;
-
-        // create 12 byte nonce
-        let mut nonce_bytes = [0u8; 12];
-        nonce_bytes[..8].copy_from_slice(&counter.to_be_bytes());
-        let nonce = Nonce::from_slice(&nonce_bytes);
-
-        let ciphertext = cipher.encrypt(&nonce, &buf[..n]).unwrap();
-
-        let mut packet = nonce_bytes.to_vec();
-        packet.extend_from_slice(&ciphertext);
-        udp.send_to(&packet, &vps_addr).unwrap();
-        println!("1. packet sent to {}", &vps_addr);
-    }
+    engine_outbound.run_outbound(reader, udp, vps_addr, counter);
 }
