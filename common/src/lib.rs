@@ -38,6 +38,7 @@ impl VpnEngine {
 
     pub fn run_inbound(&self, mut writer: Writer, udp: Arc<UdpSocket>, expected_src: Option<SocketAddr>) {
         let mut buf = vec![0u8; 1528];
+        let mut nonce_window: NonceWindow = NonceWindow::new();
         loop {
             let (n, src) = udp.recv_from(&mut buf).unwrap();
 
@@ -51,12 +52,19 @@ impl VpnEngine {
             let (nonce_bytes, ciphertext) = buf[..n].split_at(12);
             let nonce = Nonce::from_slice(nonce_bytes);
 
-            // TODO: check nonce with previous nonce sent
+            let mut counter_bytes = [0u8; 8];
+            counter_bytes.copy_from_slice(&nonce_bytes[..8]);
 
-            let decrypted = self.cipher.decrypt(&nonce, ciphertext).unwrap();
+            let nonce_verified = nonce_window.check(u64::from_be_bytes(counter_bytes));
 
-            writer.write_all(&decrypted).unwrap();
-            println!("inbound");
+            if nonce_verified {
+                let decrypted = self.cipher.decrypt(&nonce, ciphertext).unwrap();
+
+                writer.write_all(&decrypted).unwrap();
+                println!("inbound");
+            } else {
+                println!("inbound dropped")
+            }
         }
     }
 }
@@ -64,4 +72,62 @@ impl VpnEngine {
 pub trait NetworkConfigurator {
     fn setup(&self);
     fn teardown(&self);
+}
+
+pub struct NonceWindow {
+    pub last_nonce: u64,
+    pub bitmap: u64
+}
+impl NonceWindow {
+    pub fn new() -> Self {
+        Self {
+            last_nonce: 0,
+            bitmap: 0
+        }
+    }
+
+    pub fn check(&mut self, new_nonce: u64) -> bool {
+        // incoming nonce is newer than previuosly seen one
+        if new_nonce > self.last_nonce {
+            let diff = new_nonce - self.last_nonce;
+
+            if diff >= 64 {
+                // newest packet cleared the window completely, reset bitmap
+                self.bitmap = 1;
+                println!("FAST: Nonce cleared window. Window reset.");
+            } else {
+                // shift bitmap by diff
+                self.bitmap <<= diff;
+                // add 1 at the end for newest nonce
+                self.bitmap |= 1;
+
+                println!("NORMAL: Nonce in front of window. Window moved forward.");
+            }
+
+            self.last_nonce = new_nonce;
+            return true;
+        }
+
+        // diff is difference from end of window to new nonce
+        let diff = self.last_nonce - new_nonce;
+        if diff < 64 {
+            // mask with bit "diff" bits from the end marked as 1
+            let mask = 1 << diff;
+
+            // check if that bit is already 1 in bitmap
+            if self.bitmap & mask == 0 {
+                self.bitmap |= mask;
+                println!("SLOW: Nonce within window and is now marked.");
+                return true;
+            } else {
+                // bit was already 1
+                println!("REPLAY: Nonce within window but was replay.");
+                return false;
+            }
+        }
+
+        // nonce is too old
+        println!("SNAIL: Nonce was too old.");
+        false
+    }
 }

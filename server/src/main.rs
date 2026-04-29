@@ -3,6 +3,7 @@ use ed25519_dalek::{Signature, SigningKey, Verifier};
 use sha2::{Digest, Sha256};
 use std::net::UdpSocket;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
 struct ServerNetworkConfigurator;
@@ -93,7 +94,11 @@ fn main() {
 
         let client_public = PublicKey::from(client_public_bytes);
 
-        // TODO: check timestamp
+        // limit age to 10 seconds
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        if now - u64::from_be_bytes(timestamp_bytes) >= 10 {
+            continue;
+        }
 
         let signature = Signature::from_bytes(&sig_bytes);
 
@@ -118,6 +123,7 @@ fn main() {
             break(key, src);
         } else {
             println!("Signature invalid.");
+            continue;
         }
     };
 
