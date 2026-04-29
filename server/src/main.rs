@@ -1,23 +1,49 @@
-use common::VpnEngine;
+use common::{NetworkConfigurator, VpnEngine};
 use ed25519_dalek::{Signature, SigningKey, Verifier};
 use sha2::{Digest, Sha256};
 use std::net::UdpSocket;
 use std::sync::Arc;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-struct CleanUp;
+struct ServerNetworkConfigurator;
+impl ServerNetworkConfigurator {
+    pub fn new() -> Self {Self}
+}
+impl NetworkConfigurator for ServerNetworkConfigurator {
+    fn setup(&self) {
+        // route new packets in tun0 to their destination instead of ignoring bc different destination
+        std::process::Command::new("sysctl")
+            .args(["-w", "net.ipv4.ip_forward=1"])
+            .status()
+            .ok();
 
-impl Drop for CleanUp {
-    fn drop(&mut self) {
+        // packets that jump from tun0 to eth0 should have their src rewritten to this vps ip
+        std::process::Command::new("iptables")
+            .args(["-t", "nat", "-A", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE"])
+            .status()
+            .ok();
+
+        // tun0 -> eth0; let packets written to tun0 jump to eth0
+        std::process::Command::new("iptables")
+            .args(["-A", "FORWARD", "-i", "tun0", "-o", "eth0", "-j", "ACCEPT"])
+            .status().ok();
+
+        // eth0 -> tun0; only allow packets from established connection to jump from eth0 to tun0
+        std::process::Command::new("iptables")
+            .args(["-A", "FORWARD", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"])
+            .status().ok();
+    }
+
+    fn teardown(&self) {
         std::process::Command::new("sysctl")
             .args(["-w", "net.ipv4.ip_forward=0"])
             .status()
-            .unwrap();
+            .ok();
 
         std::process::Command::new("iptables")
             .args(["-t", "nat", "-D", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE"])
             .status()
-            .unwrap();
+            .ok();
 
         std::process::Command::new("iptables")
             .args(["-D", "FORWARD", "-i", "tun0", "-o", "eth0", "-j", "ACCEPT"])
@@ -25,8 +51,16 @@ impl Drop for CleanUp {
         std::process::Command::new("iptables")
             .args(["-D", "FORWARD", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"])
             .status().ok();
+
+        println!("SERVER TEARDOWN COMPLETE")
     }
 }
+impl Drop for ServerNetworkConfigurator {
+    fn drop(&mut self) {
+        self.teardown();
+    }
+}
+
 
 fn main() {
     let access_key = SigningKey::from(&[0u8; 32]);
@@ -97,51 +131,15 @@ fn main() {
 
     let device = tun::create(&config).unwrap();
 
-    // route new packets in tun0 to their destination instead of ignoring bc different destination
-    std::process::Command::new("sysctl")
-        .args(["-w", "net.ipv4.ip_forward=1"])
-        .status()
-        .unwrap();
+    let network_configurator = Arc::new(ServerNetworkConfigurator::new());
 
-    // packets that jump from tun0 to eth0 should have their src rewritten to this vps ip
-    std::process::Command::new("iptables")
-        .args(["-t", "nat", "-A", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE"])
-        .status()
-        .unwrap();
-
-    // tun0 -> eth0; let packets written to tun0 jump to eth0
-    std::process::Command::new("iptables")
-        .args(["-A", "FORWARD", "-i", "tun0", "-o", "eth0", "-j", "ACCEPT"])
-        .status().ok();
-
-    // eth0 -> tun0; only allow packets from established connection to jump from eth0 to tun0
-    std::process::Command::new("iptables")
-        .args(["-A", "FORWARD", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"])
-        .status().ok();
+    network_configurator.setup();
 
     println!("routes set");
 
-    let _cleanup = CleanUp;
-
+    let cleanup_config = Arc::clone(&network_configurator);
     ctrlc::set_handler(move || {
-        std::process::Command::new("sysctl")
-            .args(["-w", "net.ipv4.ip_forward=0"])
-            .status()
-            .unwrap();
-
-        std::process::Command::new("iptables")
-            .args(["-t", "nat", "-D", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE"])
-            .status()
-            .unwrap();
-
-        std::process::Command::new("iptables")
-            .args(["-D", "FORWARD", "-i", "tun0", "-o", "eth0", "-j", "ACCEPT"])
-            .status().ok();
-        std::process::Command::new("iptables")
-            .args(["-D", "FORWARD", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"])
-            .status().ok();
-
-        std::process::exit(0);
+        cleanup_config.teardown();
     }).unwrap();
 
     let counter: u64 = 0;

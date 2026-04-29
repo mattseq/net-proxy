@@ -1,5 +1,4 @@
-use chacha20poly1305::{ChaCha20Poly1305, KeyInit};
-use common::VpnEngine;
+use common::{NetworkConfigurator, VpnEngine};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use std::net::{SocketAddr, UdpSocket};
@@ -7,12 +6,11 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-struct CleanUp {
+struct ClientNetworkConfigurator {
     vps_route: String,
     gateway_ip: String
 }
-
-impl CleanUp {
+impl ClientNetworkConfigurator {
     fn new(vps_ip: &str, gateway_ip: &str) -> Self {
         Self {
             vps_route: format!("{}/32", vps_ip),
@@ -20,9 +18,27 @@ impl CleanUp {
         }
     }
 }
+impl NetworkConfigurator for ClientNetworkConfigurator {
+    fn setup(&self) {
+        // prevent tunnel traffic from going into itself by routing vps traffic through the router
+        // also idk now how string concatenation works in rust so imma use format, sue me
+        std::process::Command::new("ip")
+            .args(["route", "add", &self.vps_route, "via", &self.gateway_ip])
+            .status().ok();
 
-impl Drop for CleanUp {
-    fn drop(&mut self) {
+        std::process::Command::new("ip")
+            .args(["route", "del", "default"])
+            .status()
+            .ok();
+
+        // route all other traffic to tun0
+        std::process::Command::new("ip")
+            .args(["route", "add", "default", "dev", "tun0"])
+            .status()
+            .ok();
+    }
+
+    fn teardown(&self) {
         std::process::Command::new("ip")
             .args(["route", "del", &self.vps_route, "via", &self.gateway_ip])
             .status().ok();
@@ -32,6 +48,13 @@ impl Drop for CleanUp {
         std::process::Command::new("ip")
             .args(["route", "add", "default", "via", &self.gateway_ip])
             .status().ok();
+
+        println!("CLIENT TEARDOWN COMPLETE")
+    }
+}
+impl Drop for ClientNetworkConfigurator {
+    fn drop(&mut self) {
+        self.teardown();
     }
 }
 
@@ -101,9 +124,7 @@ fn main() {
 
     udp.set_read_timeout(None).unwrap();
 
-    let cipher = Arc::new(ChaCha20Poly1305::new_from_slice(&session_key).unwrap());
-    let mut counter: u64 = 0;
-    let cipher_recv = Arc::clone(&cipher);
+    let counter: u64 = 0;
 
     let mut config = tun::Configuration::default();
     config
@@ -115,48 +136,17 @@ fn main() {
 
     let device = tun::create(&config).unwrap();
 
-    // prevent tunnel traffic from going into itself by routing vps traffic through the router
-    // also idk now how string concatenation works in rust so imma use format, sue me
-    let vps_route = format!("{}/32", VPS_IP);
-    std::process::Command::new("ip")
-        .args(["route", "add", &vps_route, "via", GATEWAY_IP])
-        .status().unwrap();
-
-    std::process::Command::new("ip")
-        .args(["route", "del", "default"])
-        .status()
-        .unwrap();
-
-    // route all other traffic to tun0
-    std::process::Command::new("ip")
-        .args(["route", "add", "default", "dev", "tun0"])
-        .status()
-        .unwrap();
+    let network_configurator = Arc::new(ClientNetworkConfigurator::new(&VPS_IP, GATEWAY_IP));
+    network_configurator.setup();
 
     println!("routes set");
 
     // split tun device into reader and writer for separate threads
-    let (mut reader, mut writer) = device.split();
+    let (reader, writer) = device.split();
 
-    // cleanup Drop trait handles removing tun0 and ip routes
-    let _cleanup = CleanUp::new(VPS_IP, GATEWAY_IP);
-
-    let v_ip = VPS_IP.to_string();
-    let g_ip = GATEWAY_IP.to_string();
+    let ctrlc_config = Arc::clone(&network_configurator);
     ctrlc::set_handler(move || {
-        let route = format!("{}/32", v_ip);
-
-        std::process::Command::new("ip")
-            .args(["route", "del", &route, "via", &g_ip])
-            .status().ok();
-        std::process::Command::new("ip")
-            .args(["route", "del", "0.0.0.0/0", "dev", "tun0"])
-            .status().ok();
-        std::process::Command::new("ip")
-            .args(["route", "add", "default", "via", &g_ip])
-            .status().ok();
-
-        std::process::exit(0);
+        ctrlc_config.teardown();
     }).unwrap();
 
     let engine_outbound = Arc::new(VpnEngine::new(&session_key));

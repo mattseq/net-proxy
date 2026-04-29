@@ -60,3 +60,8 @@ impl VpnEngine {
         }
     }
 }
+
+pub trait NetworkConfigurator {
+    fn setup(&self);
+    fn teardown(&self);
+}
