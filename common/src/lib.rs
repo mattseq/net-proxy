@@ -3,7 +3,20 @@ use chacha20poly1305::{ChaCha20Poly1305, ChaChaPoly1305, KeyInit, Nonce};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, UdpSocket};
 use std::sync::Arc;
+use ed25519_dalek::SigningKey;
+use sha2::{Digest, Sha256};
 use tun::{Reader, Writer};
+
+pub fn password_to_key(password: String) -> SigningKey {
+    let mut hasher = Sha256::new();
+    Digest::update(&mut hasher, password.as_bytes());
+    let hash = hasher.finalize();
+    
+    let mut key_bytes = [0u8; 32];
+    key_bytes.copy_from_slice(&hash);
+    
+    SigningKey::from_bytes(&key_bytes)
+}
 
 pub struct VpnEngine {
     pub cipher: Arc<ChaCha20Poly1305>

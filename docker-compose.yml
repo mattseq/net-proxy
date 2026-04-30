@@ -1,8 +1,8 @@
 services:
   vpn-server:
-    build:
-      context: .
-      dockerfile: ./server/Dockerfile
+    build: .
+    image: vpn-app:latest
+    command: ["serve", "--port", "5000", "--password", "abc123"]
     privileged: true
     cap_add:
       - NET_ADMIN
@@ -13,9 +13,10 @@ services:
         ipv4_address: 172.20.0.10
 
   vpn-client:
-    build:
-      context: .
-      dockerfile: ./client/Dockerfile
+    build: .
+    image: vpn-app:latest
+    command: ["connect", "172.20.0.10", "--port", "5000", "--password", "abc123"]
+    privileged: true
     cap_add:
       - NET_ADMIN
     devices:

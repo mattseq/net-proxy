@@ -10,3 +10,13 @@ rand = "0.8"
 sha2 = "0.11.0"
 tun = "0.8.6"
 x25519-dalek = "2.0.1"
+
+[package]
+name = "proxy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+server = { path = "./server" }
+client = { path = "./client" }
+clap = { version = "4.6.1", features = ["derive"] }

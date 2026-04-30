@@ -2,12 +2,12 @@
 FROM rust:alpine AS builder
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p client
+RUN cargo build --release
 
 # Stage 2: Run
 FROM alpine:latest
 RUN apk add --no-cache iproute2 iptables
 WORKDIR /app
 # Copy the binary from the builder stage
-COPY --from=builder /app/target/release/client /app/client
-CMD ["./client"]
+COPY --from=builder /app/target/release/proxy /app/proxy
+ENTRYPOINT ["./proxy"]

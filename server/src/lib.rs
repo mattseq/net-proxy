@@ -1,4 +1,4 @@
-use common::{NetworkConfigurator, VpnEngine};
+use common::{password_to_key, NetworkConfigurator, VpnEngine};
 use ed25519_dalek::{Signature, SigningKey, Verifier};
 use sha2::{Digest, Sha256};
 use std::net::UdpSocket;
@@ -62,12 +62,11 @@ impl Drop for ServerNetworkConfigurator {
     }
 }
 
-
-fn main() {
-    let access_key = SigningKey::from(&[0u8; 32]);
+pub fn run_server(password: String, port: u16) {
+    let access_key = password_to_key(password);
     let verify_key = access_key.verifying_key();
 
-    let udp = Arc::new(UdpSocket::bind("0.0.0.0:5000").unwrap());
+    let udp = Arc::new(UdpSocket::bind(format!("0.0.0.0:{}", port)).unwrap());
     let udp_recv = Arc::clone(&udp);
 
     let (session_key, client_addr) = loop {

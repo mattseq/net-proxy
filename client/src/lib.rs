@@ -1,4 +1,4 @@
-use common::{NetworkConfigurator, VpnEngine};
+use common::{password_to_key, NetworkConfigurator, VpnEngine};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use std::net::{SocketAddr, UdpSocket};
@@ -58,13 +58,12 @@ impl Drop for ClientNetworkConfigurator {
     }
 }
 
-fn main() {
-    const VPS_IP: &str = "172.20.0.10";
-    const VPS_PORT: &str = "5000";
+pub fn run_client(password: String, ip: String, port: u16) {
+    // TODO: dont hardcode gateway ip
     const GATEWAY_IP: &str = "172.20.0.1";
-    let access_key: SigningKey = SigningKey::from(&[0u8; 32]);
+    let access_key: SigningKey = password_to_key(password);
 
-    let vps_addr: SocketAddr = format!("{}:{}", VPS_IP, VPS_PORT).parse().expect("Invalid VPS address format");
+    let vps_addr: SocketAddr = format!("{}:{}", ip, port).parse().expect("Invalid VPS address format");
 
     let udp = Arc::new(UdpSocket::bind("0.0.0.0:0").unwrap());
 
@@ -136,7 +135,7 @@ fn main() {
 
     let device = tun::create(&config).unwrap();
 
-    let network_configurator = Arc::new(ClientNetworkConfigurator::new(&VPS_IP, GATEWAY_IP));
+    let network_configurator = Arc::new(ClientNetworkConfigurator::new(&ip, GATEWAY_IP));
     network_configurator.setup();
 
     println!("routes set");
