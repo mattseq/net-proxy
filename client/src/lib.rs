@@ -58,9 +58,20 @@ impl Drop for ClientNetworkConfigurator {
     }
 }
 
+pub fn get_default_gateway() -> String {
+    let result = std::process::Command::new("ip")
+        .args(["route", "show", "default"])
+        .output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+
+    // get third string which should be the gateway ip
+    stdout.split_whitespace().nth(2).expect("Could not find gateway IP.").to_string()
+}
+
 pub fn run_client(password: String, ip: String, port: u16) {
-    // TODO: dont hardcode gateway ip
-    const GATEWAY_IP: &str = "172.20.0.1";
+
+    let gateway_ip = get_default_gateway();
     let access_key: SigningKey = password_to_key(password);
 
     let vps_addr: SocketAddr = format!("{}:{}", ip, port).parse().expect("Invalid VPS address format");
@@ -135,7 +146,7 @@ pub fn run_client(password: String, ip: String, port: u16) {
 
     let device = tun::create(&config).unwrap();
 
-    let network_configurator = Arc::new(ClientNetworkConfigurator::new(&ip, GATEWAY_IP));
+    let network_configurator = Arc::new(ClientNetworkConfigurator::new(&ip, &gateway_ip));
     network_configurator.setup();
 
     println!("routes set");
