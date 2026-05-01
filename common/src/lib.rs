@@ -89,7 +89,7 @@ pub trait NetworkConfigurator {
 
 pub struct NonceWindow {
     pub last_nonce: u64,
-    pub bitmap: u64
+    pub bitmap: u128
 }
 impl NonceWindow {
     pub fn new() -> Self {
@@ -104,7 +104,7 @@ impl NonceWindow {
         if new_nonce > self.last_nonce {
             let diff = new_nonce - self.last_nonce;
 
-            if diff >= 64 {
+            if diff >= 128 {
                 // newest packet cleared the window completely, reset bitmap
                 self.bitmap = 1;
                 println!("FAST: Nonce cleared window. Window reset.");
@@ -123,7 +123,7 @@ impl NonceWindow {
 
         // diff is difference from end of window to new nonce
         let diff = self.last_nonce - new_nonce;
-        if diff < 64 {
+        if diff < 128 {
             // mask with bit "diff" bits from the end marked as 1
             let mask = 1 << diff;
 

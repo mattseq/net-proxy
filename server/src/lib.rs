@@ -6,9 +6,15 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 
-struct ServerNetworkConfigurator;
+struct ServerNetworkConfigurator {
+    network_device: String
+}
 impl ServerNetworkConfigurator {
-    pub fn new() -> Self {Self}
+    pub fn new(network_device: String) -> Self {
+        Self {
+            network_device
+        }
+    }
 }
 impl NetworkConfigurator for ServerNetworkConfigurator {
     fn setup(&self) {
@@ -20,18 +26,18 @@ impl NetworkConfigurator for ServerNetworkConfigurator {
 
         // packets that jump from tun0 to eth0 should have their src rewritten to this vps ip
         std::process::Command::new("iptables")
-            .args(["-t", "nat", "-A", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE"])
+            .args(["-t", "nat", "-A", "POSTROUTING", "-o", &self.network_device, "-j", "MASQUERADE"])
             .status()
             .ok();
 
         // tun0 -> eth0; let packets written to tun0 jump to eth0
         std::process::Command::new("iptables")
-            .args(["-A", "FORWARD", "-i", "tun0", "-o", "eth0", "-j", "ACCEPT"])
+            .args(["-A", "FORWARD", "-i", "tun0", "-o", &self.network_device, "-j", "ACCEPT"])
             .status().ok();
 
         // eth0 -> tun0; only allow packets from established connection to jump from eth0 to tun0
         std::process::Command::new("iptables")
-            .args(["-A", "FORWARD", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"])
+            .args(["-A", "FORWARD", "-i", &self.network_device, "-o", "tun0", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"])
             .status().ok();
     }
 
@@ -42,12 +48,12 @@ impl NetworkConfigurator for ServerNetworkConfigurator {
             .ok();
 
         std::process::Command::new("iptables")
-            .args(["-t", "nat", "-D", "POSTROUTING", "-o", "eth0", "-j", "MASQUERADE"])
+            .args(["-t", "nat", "-D", "POSTROUTING", "-o", &self.network_device, "-j", "MASQUERADE"])
             .status()
             .ok();
 
         std::process::Command::new("iptables")
-            .args(["-D", "FORWARD", "-i", "tun0", "-o", "eth0", "-j", "ACCEPT"])
+            .args(["-D", "FORWARD", "-i", "tun0", "-o", &self.network_device, "-j", "ACCEPT"])
             .status().ok();
         std::process::Command::new("iptables")
             .args(["-D", "FORWARD", "-m", "state", "--state", "ESTABLISHED,RELATED", "-j", "ACCEPT"])
@@ -60,6 +66,17 @@ impl Drop for ServerNetworkConfigurator {
     fn drop(&mut self) {
         self.teardown();
     }
+}
+
+pub fn get_network_device() -> String {
+    let result = std::process::Command::new("ip")
+        .args(["route", "show", "default"])
+        .output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&result.stdout);
+
+    // get third string which should be the gateway ip
+    stdout.split_whitespace().nth(4).expect("Could not find default network device.").to_string()
 }
 
 pub fn run_server(password: String, port: u16) {
@@ -95,7 +112,7 @@ pub fn run_server(password: String, port: u16) {
 
         // limit age to 10 seconds
         let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        if now - u64::from_be_bytes(timestamp_bytes) >= 10 {
+        if now - u64::from_be_bytes(timestamp_bytes) >= 500 {
             continue;
         }
 
@@ -136,7 +153,7 @@ pub fn run_server(password: String, port: u16) {
 
     let device = tun::create(&config).unwrap();
 
-    let network_configurator = Arc::new(ServerNetworkConfigurator::new());
+    let network_configurator = Arc::new(ServerNetworkConfigurator::new(get_network_device()));
 
     network_configurator.setup();
 
