@@ -45,6 +45,8 @@ impl NetworkConfigurator for ClientNetworkConfigurator {
         std::process::Command::new("ip")
             .args(["route", "del", "0.0.0.0/0", "dev", "tun0"])
             .status().ok();
+
+        // restores the exact same previous route bc gateway ip is softcoded from the default route
         std::process::Command::new("ip")
             .args(["route", "add", "default", "via", &self.gateway_ip])
             .status().ok();
@@ -157,6 +159,7 @@ pub fn run_client(password: String, ip: String, port: u16) {
     let ctrlc_config = Arc::clone(&network_configurator);
     ctrlc::set_handler(move || {
         ctrlc_config.teardown();
+        std::process::exit(0)
     }).unwrap();
 
     let engine_outbound = Arc::new(VpnEngine::new(&session_key));

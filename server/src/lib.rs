@@ -145,6 +145,7 @@ pub fn run_server(password: String, port: u16) {
     let cleanup_config = Arc::clone(&network_configurator);
     ctrlc::set_handler(move || {
         cleanup_config.teardown();
+        std::process::exit(0)
     }).unwrap();
 
     let counter: u64 = 0;
