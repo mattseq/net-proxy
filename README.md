@@ -9,21 +9,25 @@ A high-performance, secure VPN and network proxy written in Rust. NetProxy creat
 
 ## Quick Start
 ### Prerequisites
-Linux: Kernel support for TUN/TAP devices.
-Network Packages: `iptables` and `iproute2`
+- Linux: Kernel support for TUN/TAP devices.
+- Network Packages: `iptables` and `iproute2`
+- must be run with root privileges
 
 ### Installation
-Download the binary from GitHub Releases for your device.
+Download the pre-compiled binary for your architecture (x86_64 or aarch64) from the Github Release.
 
 ### Usage
 1. Start the Server
-`./proxy serve --port <port> --password <password>`
+`sudo ./proxy serve --port <port> --password <password>`
 
 2. Port Forward the Server IP.
-You'll have to configure your router to port forward the proxy server.
+   Ensure your router is configured to forward the server's port (UDP) to the host running the proxy.
 
 3. Connect with the Client
-`./proxy connect <server_ip> --port <port> --password <password>`
+`sudo ./proxy connect <server_ip> --port <port> --password <password>`
+
+### Docker Testing
+A Docker Compose setup is included and can be used to test the VPN on a single device without exposing your own network. Keep in mind that it isn't fully accurate to the real use case. Problems with network devices, latency, and compatibility may arise in real use cases.
 
 ### Current Limitations and Possible Improvements
 - Server can only maintain one client
