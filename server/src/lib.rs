@@ -1,5 +1,5 @@
 use common::{password_to_key, NetworkConfigurator, VpnEngine};
-use ed25519_dalek::{Signature, SigningKey, Verifier};
+use ed25519_dalek::{Signature, Verifier};
 use sha2::{Digest, Sha256};
 use std::net::UdpSocket;
 use std::sync::Arc;
