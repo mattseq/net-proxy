@@ -27,7 +27,21 @@ Download the pre-compiled binary for your architecture (x86_64 or aarch64) from 
 `sudo ./proxy connect <server_ip> --port <port> --password <password>`
 
 ### Docker Testing
-A Docker Compose setup is included and can be used to test the VPN on a single device without exposing your own network. Keep in mind that it isn't fully accurate to the real use case. Problems with network devices, latency, and compatibility may arise in real use cases.
+A Docker Compose setup is included and can be used to test the VPN on a single device without exposing your own network. Keep in mind that it isn't fully accurate to the real use case. Problems with network devices, latency, and compatibility may arise in real scenarios.
+
+https://cdn.hackclub.com/019dede2-2c14-7824-a15d-41a1d9977d60/2026-05-03%2007-47-01.mkv
+
+1. Launch the Docker Compose
+   - `docker compose up`
+   - You should see that both the client and server configured some network rules and performed the handshake.
+2. Open a Shell into the Client Container
+   - Open a new terminal and run `docker exec -it net-proxy-vpn-client-1 sh`.
+   - You can now run commands inside the client container.
+3. Ping from Client
+   - Inside the client container, run `ping 8.8.8.8`
+   - The ping should work and in the previous terminal you should see both containers handling requests.
+4. Traceroute
+   - You can also do `traceroute 8.8.8.8` to verify that the ping travels through the server (10.0.0.2).
 
 ### Current Limitations and Possible Improvements
 - Server can only maintain one client
