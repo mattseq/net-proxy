@@ -29,7 +29,9 @@ Download the pre-compiled binary for your architecture (x86_64 or aarch64) from 
 ### Docker Testing
 A Docker Compose setup is included and can be used to test the VPN on a single device without exposing your own network. Keep in mind that it isn't fully accurate to the real use case. Problems with network devices, latency, and compatibility may arise in real scenarios.
 
-<video src="https://cdn.hackclub.com/019dede2-2c14-7824-a15d-41a1d9977d60/2026-05-03%2007-47-01.mkv" width="100%" controls></video>
+<p align="center">
+   <video src="https://cdn.hackclub.com/019dede2-2c14-7824-a15d-41a1d9977d60/2026-05-03%2007-47-01.mkv" width="100%" controls></video>
+</p>
 
 1. Launch the Docker Compose
    - `docker compose up`
