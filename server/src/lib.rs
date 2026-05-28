@@ -1,4 +1,4 @@
-use common::{password_to_key, NetworkConfigurator, VpnEngine};
+use common::{NetworkConfigurator, PacketType, VpnEngine, VpnPacket, password_to_key};
 use ed25519_dalek::{Signature, Verifier};
 use sha2::{Digest, Sha256};
 use std::net::UdpSocket;
@@ -91,22 +91,26 @@ pub fn run_server(password: String, port: u16) {
 
         let (n, src) = udp.recv_from(&mut buf).unwrap();
 
+        let packet = VpnPacket::decode(&buf[..n]).expect("Unexpected Packet Type");
+
+        let len = packet.payload.len();
+
         // 32 (client public key) + 8 (timestamp) + 64 (signature)
-        if n < 104 {
+        if len < 104 {
             continue;
         }
 
         // client public key byes
         let mut client_public_bytes = [0u8; 32];
-        client_public_bytes.clone_from_slice(&buf[..32]);
+        client_public_bytes.clone_from_slice(&packet.payload[..32]);
 
         // timestamp bytes
         let mut timestamp_bytes = [0u8; 8];
-        timestamp_bytes.clone_from_slice(&buf[32..40]);
+        timestamp_bytes.clone_from_slice(&packet.payload[32..40]);
 
         // signature bytes
         let mut sig_bytes = [0u8; 64];
-        sig_bytes.clone_from_slice(&buf[40..104]);
+        sig_bytes.clone_from_slice(&packet.payload[40..104]);
 
         let client_public = PublicKey::from(client_public_bytes);
 
@@ -118,15 +122,17 @@ pub fn run_server(password: String, port: u16) {
 
         let signature = Signature::from_bytes(&sig_bytes);
 
-        if verify_key.verify(&buf[..40], &signature).is_ok() {
+        if verify_key.verify(&packet.payload[..40], &signature).is_ok() {
             println!("Signature valid.");
 
             // gen keys
             let private = EphemeralSecret::random_from_rng(rand::thread_rng());
             let public = PublicKey::from(&private);
 
+            let packet = VpnPacket::new(PacketType::Handshake, public.as_bytes());
+
             // send public key
-            udp.send_to(public.as_bytes(), &src).expect("Failed to send handshake.");
+            udp.send_to(&packet.encode(), &src).expect("Failed to send handshake.");
 
             let shared = private.diffie_hellman(&client_public);
 

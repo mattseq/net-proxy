@@ -41,9 +41,11 @@ impl VpnEngine {
 
             let ciphertext = self.cipher.encrypt(&nonce, &buf[..n]).unwrap();
 
-            let mut packet = nonce_bytes.to_vec();
-            packet.extend_from_slice(&ciphertext);
-            udp.send_to(&packet, addr).unwrap();
+            let mut payload = nonce_bytes.to_vec();
+            payload.extend_from_slice(&ciphertext);
+
+            let packet = VpnPacket::new(PacketType::Data, &payload);
+            udp.send_to(&packet.encode(), addr).unwrap();
 
             println!("outbound");
         }
@@ -62,7 +64,11 @@ impl VpnEngine {
                 }
             }
 
-            let (nonce_bytes, ciphertext) = buf[..n].split_at(12);
+            let packet = VpnPacket::decode(&buf[..n]).expect("Unexpected Packet Type");
+            let payload = &packet.payload;
+            let len = payload.len();
+
+            let (nonce_bytes, ciphertext) = payload[..len].split_at(12);
             let nonce = Nonce::from_slice(nonce_bytes);
 
             let mut counter_bytes = [0u8; 8];
@@ -142,5 +148,50 @@ impl NonceWindow {
         // nonce is too old
         println!("SNAIL: Nonce was too old.");
         false
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum PacketType {
+    Handshake = 0,
+    Data = 1,
+    Stop = 2,
+}
+
+pub struct VpnPacket {
+    pub packet_type: PacketType,
+    pub payload: Vec<u8>
+}
+
+impl VpnPacket {
+    pub fn new(packet_type: PacketType, buf: &[u8]) -> Self {
+        Self {
+            packet_type,
+            payload: buf.to_vec()
+        }
+    }
+
+    pub fn decode(buf: &[u8]) -> Option<Self> {
+        let (t, rest) = buf.split_first()?;
+
+        let packet_type = match t {
+            0 => PacketType::Handshake,
+            1 => PacketType::Data,
+            2 => PacketType::Stop,
+            _ => return None,
+        };
+
+        Some(Self {
+            packet_type,
+            payload: rest.to_vec()
+        })
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.payload.len() + 1);
+        out.push(self.packet_type as u8);
+        out.extend_from_slice(&self.payload);
+
+        out
     }
 }

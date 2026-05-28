@@ -1,4 +1,4 @@
-use common::{password_to_key, NetworkConfigurator, VpnEngine};
+use common::{NetworkConfigurator, VpnEngine, VpnPacket, PacketType, password_to_key};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use std::net::{SocketAddr, UdpSocket};
@@ -99,23 +99,32 @@ pub fn run_client(password: String, ip: String, port: u16) {
     let signature = access_key.sign(&payload);
 
     // handshake packet with both (public key + time) and their signature
-    let mut handshake_packet = payload;
-    handshake_packet.extend_from_slice(&signature.to_bytes());
+    let mut handshake_buf = payload;
+    handshake_buf.extend_from_slice(&signature.to_bytes());
+
+    // create vpn packet with handshake type
+    let packet = VpnPacket::new(PacketType::Handshake, &handshake_buf);
 
     udp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
 
     let session_key = loop {
         println!("Sending handshake to {}", &vps_addr);
 
-        udp.send_to(&handshake_packet, &vps_addr).expect("Failed to send handshake.");
+        udp.send_to(&packet.encode(), &vps_addr).expect("Failed to send handshake.");
 
         println!("Handshake sent. Waiting for response...");
-        let mut resp_buf = [0u8; 32];
+        let mut resp_buf = [0u8; 1528];
 
         match udp.recv_from(&mut resp_buf) {
             Ok((n, _)) => {
-                if n >= 32 {
-                    let server_public = PublicKey::from(resp_buf);
+                let packet: VpnPacket = VpnPacket::decode(&resp_buf[..n]).expect("Unexpected Packet Type");
+                let len = packet.payload.len();
+
+                if len >= 32 {
+                    let mut payload = [0u8; 32];
+                    payload.copy_from_slice(&packet.payload[..32]);
+                    
+                    let server_public = PublicKey::from(payload);
                     let shared = private.diffie_hellman(&server_public);
 
                     let mut hasher = Sha256::new();
