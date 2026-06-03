@@ -1,4 +1,4 @@
-use common::{NetworkConfigurator, VpnEngine, VpnPacket, PacketType, password_to_key};
+use common::{NetworkConfigurator, NonceWindow, PacketType, VpnEngine, VpnPacket, password_to_key};
 use ed25519_dalek::{Signer, SigningKey};
 use sha2::{Digest, Sha256};
 use std::net::{SocketAddr, UdpSocket};
@@ -145,8 +145,6 @@ pub fn run_client(password: String, ip: String, port: u16) {
 
     udp.set_read_timeout(None).unwrap();
 
-    let counter: u64 = 0;
-
     let mut config = tun::Configuration::default();
     config
         .address("10.0.0.1")
@@ -163,7 +161,7 @@ pub fn run_client(password: String, ip: String, port: u16) {
     println!("routes set");
 
     // split tun device into reader and writer for separate threads
-    let (reader, writer) = device.split();
+    let (mut reader, mut writer) = device.split();
 
     let ctrlc_config = Arc::clone(&network_configurator);
     ctrlc::set_handler(move || {
@@ -176,9 +174,24 @@ pub fn run_client(password: String, ip: String, port: u16) {
 
     // receive thread: receive from udp and write to device
     std::thread::spawn(move || {
-        engine_inbound.run_inbound(writer, udp_recv, Some(vps_addr));
-    });
+        let mut nonce_window = NonceWindow::new();
+        loop {
+            if let Some(packet) = engine_inbound.receive_udp_packet(&udp_recv, Some(vps_addr)) {
+                if let Some(buf) = engine_inbound.decrypt_vpn_packet(packet, &mut nonce_window) {
+                    engine_inbound.send_to_tun(&mut writer, &buf);
+                }
+            }
 
+            // engine_inbound.run_tun(&mut writer, &udp_recv, Some(vps_addr), &mut nonce_window);
+        }
+    });
+    
     // write thread: read from device and write to udp
-    engine_outbound.run_outbound(reader, udp, vps_addr, counter);
+    let mut counter: u64 = 0;
+    loop {
+        let raw_packet = engine_outbound.receive_tun_packet(&mut reader);
+        let packet = engine_outbound.encrypt_vpn_packet(&raw_packet, &mut counter);
+        engine_outbound.send_to_udp(&udp, packet, vps_addr);
+        // engine_outbound.run_between(&mut reader, &udp, vps_addr, &mut counter);
+    }
 }

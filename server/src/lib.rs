@@ -1,4 +1,4 @@
-use common::{NetworkConfigurator, PacketType, VpnEngine, VpnPacket, password_to_key};
+use common::{NetworkConfigurator, NonceWindow, PacketType, VpnEngine, VpnPacket, password_to_key};
 use ed25519_dalek::{Signature, Verifier};
 use sha2::{Digest, Sha256};
 use std::net::UdpSocket;
@@ -92,7 +92,6 @@ pub fn run_server(password: String, port: u16) {
         let (n, src) = udp.recv_from(&mut buf).unwrap();
 
         let packet = VpnPacket::decode(&buf[..n]).expect("Unexpected Packet Type");
-
         let len = packet.payload.len();
 
         // 32 (client public key) + 8 (timestamp) + 64 (signature)
@@ -171,17 +170,30 @@ pub fn run_server(password: String, port: u16) {
         std::process::exit(0)
     }).unwrap();
 
-    let counter: u64 = 0;
-    let (reader, writer) = device.split();
+    let (mut reader, mut writer) = device.split();
 
     let engine_outbound = Arc::new(VpnEngine::new(&session_key));
     let engine_inbound = Arc::clone(&engine_outbound);
 
     // proxy thread: receive from client through udp, modify sender ip (nat rule), and send through tun
     std::thread::spawn(move || {
-        engine_inbound.run_inbound(writer, udp, Some(client_addr));
+        let mut nonce_window = NonceWindow::new();
+        loop { 
+            if let Some(packet) = engine_inbound.receive_udp_packet(&udp_recv, Some(client_addr)) {
+                if let Some(buf) = engine_inbound.decrypt_vpn_packet(packet, &mut nonce_window) {
+                    engine_inbound.send_to_tun(&mut writer, &buf);
+                }
+            }
+            // engine_inbound.run_tun(&mut writer, &udp_recv, Some(client_addr), &mut nonce_window);
+        }
     });
-
+    
     // return thread: receive from tun, modify destination ip (nat rule), send back to client through udp
-    engine_outbound.run_outbound(reader, udp_recv, client_addr, counter);
+    let mut counter: u64 = 0;
+    loop {
+        let raw_packet = engine_outbound.receive_tun_packet(&mut reader);
+        let packet = engine_outbound.encrypt_vpn_packet(&raw_packet, &mut counter);
+        engine_outbound.send_to_udp(&udp, packet, client_addr);
+        // engine_outbound.run_between(&mut reader, &udp, client_addr, &mut counter);
+    }
 }

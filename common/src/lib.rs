@@ -29,62 +29,87 @@ impl VpnEngine {
         }
     }
 
-    pub fn run_outbound(&self, mut reader: Reader, udp: Arc<UdpSocket>, addr: SocketAddr, mut counter: u64) {
+    pub fn run_between(&self, reader: &mut Reader, udp: &Arc<UdpSocket>, addr: SocketAddr, counter: &mut u64) {
         let mut buf = vec![0u8; 1528];
-        loop {
-            let n = reader.read(&mut buf).unwrap();
-            counter += 1;
+        let n = reader.read(&mut buf).unwrap();
+        *counter += 1;
 
-            let mut nonce_bytes =[0u8; 12];
-            nonce_bytes[..8].copy_from_slice(&counter.to_be_bytes());
-            let nonce = Nonce::from_slice(&nonce_bytes);
+        let mut nonce_bytes =[0u8; 12];
+        nonce_bytes[..8].copy_from_slice(&counter.to_be_bytes());
+        let nonce = Nonce::from_slice(&nonce_bytes);
 
-            let ciphertext = self.cipher.encrypt(&nonce, &buf[..n]).unwrap();
+        let ciphertext = self.cipher.encrypt(&nonce, &buf[..n]).unwrap();
 
-            let mut payload = nonce_bytes.to_vec();
-            payload.extend_from_slice(&ciphertext);
+        let mut payload = nonce_bytes.to_vec();
+        payload.extend_from_slice(&ciphertext);
 
-            let packet = VpnPacket::new(PacketType::Data, &payload);
-            udp.send_to(&packet.encode(), addr).unwrap();
+        let packet = VpnPacket::new(PacketType::Data, &payload);
+        udp.send_to(&packet.encode(), addr).unwrap();
 
-            println!("outbound");
-        }
+        println!("between");
     }
 
-    pub fn run_inbound(&self, mut writer: Writer, udp: Arc<UdpSocket>, expected_src: Option<SocketAddr>) {
+    pub fn receive_tun_packet(&self, reader: &mut Reader) -> Vec<u8> {
         let mut buf = vec![0u8; 1528];
-        let mut nonce_window: NonceWindow = NonceWindow::new();
-        loop {
-            let (n, src) = udp.recv_from(&mut buf).unwrap();
+        let n = reader.read(&mut buf).unwrap();
+        buf[..n].to_vec()
+    }
 
-            // only allow expected_src if given
-            if let Some(expected) = expected_src {
-                if src != expected {
-                    continue;
-                }
-            }
+    pub fn encrypt_vpn_packet(&self, buf: &[u8], counter: &mut u64) -> VpnPacket {
+        *counter += 1;
 
-            let packet = VpnPacket::decode(&buf[..n]).expect("Unexpected Packet Type");
-            let payload = &packet.payload;
-            let len = payload.len();
+        let mut nonce_bytes =[0u8; 12];
+        nonce_bytes[..8].copy_from_slice(&counter.to_be_bytes());
+        let nonce = Nonce::from_slice(&nonce_bytes);
 
-            let (nonce_bytes, ciphertext) = payload[..len].split_at(12);
-            let nonce = Nonce::from_slice(nonce_bytes);
+        let ciphertext = self.cipher.encrypt(&nonce, buf).unwrap();
 
-            let mut counter_bytes = [0u8; 8];
-            counter_bytes.copy_from_slice(&nonce_bytes[..8]);
+        let mut payload = nonce_bytes.to_vec();
+        payload.extend_from_slice(&ciphertext);
 
-            let nonce_verified = nonce_window.check(u64::from_be_bytes(counter_bytes));
+        VpnPacket::new(PacketType::Data, &payload)
+    }
 
-            if nonce_verified {
-                let decrypted = self.cipher.decrypt(&nonce, ciphertext).unwrap();
+    pub fn send_to_udp(&self, udp: &Arc<UdpSocket>, packet: VpnPacket, addr: SocketAddr) {
+        udp.send_to(&packet.encode(), addr).unwrap();
+    }
 
-                writer.write_all(&decrypted).unwrap();
-                println!("inbound");
-            } else {
-                println!("inbound dropped")
+    pub fn receive_udp_packet(&self, udp_recv: &Arc<UdpSocket>, expected_src: Option<SocketAddr>) -> Option<VpnPacket> {
+        let mut buf = vec![0u8; 1528];
+    
+        let (n, src) = udp_recv.recv_from(&mut buf).unwrap();
+
+        // only allow expected_src if given
+        if let Some(expected) = expected_src {
+            if src != expected {
+                return None;
             }
         }
+
+        Some(VpnPacket::decode(&buf[..n]).expect("Unexpected Packet Type"))
+    }
+
+    pub fn decrypt_vpn_packet(&self, packet: VpnPacket, nonce_window: &mut NonceWindow) -> Option<Vec<u8>> {
+        let payload = &packet.payload;
+        let len = payload.len();
+
+        let (nonce_bytes, ciphertext) = payload[..len].split_at(12);
+        let nonce = Nonce::from_slice(nonce_bytes);
+
+        let mut counter_bytes = [0u8; 8];
+        counter_bytes.copy_from_slice(&nonce_bytes[..8]);
+
+        let nonce_verified = nonce_window.check(u64::from_be_bytes(counter_bytes));
+
+        if nonce_verified {
+            let decrypted: Vec<u8> = self.cipher.decrypt(&nonce, ciphertext).unwrap();
+            return Some(decrypted);
+        }
+        return None;
+    }
+
+    pub fn send_to_tun(&self, writer: &mut Writer, buf: &[u8]) {
+        writer.write_all(buf).unwrap();
     }
 }
 
